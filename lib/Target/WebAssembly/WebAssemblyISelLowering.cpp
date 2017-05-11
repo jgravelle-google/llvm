@@ -111,6 +111,8 @@ WebAssemblyTargetLowering::WebAssemblyTargetLowering(
           ISD::SUBE}) {
       setOperationAction(Op, T, Expand);
     }
+    setOperationAction(ISD::FP_TO_UINT, T, LibCall);
+    setOperationAction(ISD::FP_TO_SINT, T, LibCall);
   }
 
   // As a special case, these operators use the type to mean the type to

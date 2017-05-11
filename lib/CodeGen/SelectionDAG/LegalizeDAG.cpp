@@ -127,6 +127,7 @@ private:
                            RTLIB::Libcall Call_I128);
   void ExpandDivRemLibCall(SDNode *Node, SmallVectorImpl<SDValue> &Results);
   void ExpandSinCosLibCall(SDNode *Node, SmallVectorImpl<SDValue> &Results);
+  SDValue ExpandFPToIntLibCall(SDNode *Node, unsigned Opc);
 
   SDValue EmitStackConvert(SDValue SrcOp, EVT SlotVT, EVT DestVT,
                            const SDLoc &dl);
@@ -2238,6 +2239,48 @@ SelectionDAGLegalize::ExpandSinCosLibCall(SDNode *Node,
       DAG.getLoad(RetVT, dl, CallInfo.second, CosPtr, MachinePointerInfo()));
 }
 
+SDValue SelectionDAGLegalize::ExpandFPToIntLibCall(SDNode* Node,
+                                                   unsigned Opc) {
+  static const struct {
+    const RTLIB::Libcall LC;
+    const unsigned Opc;
+    const MVT::SimpleValueType From;
+    const MVT::SimpleValueType To;
+  } SupportedLibcalls[] = {
+    { RTLIB::FPTOUINT_F32_I32,   ISD::FP_TO_SINT, MVT::f32,  MVT::i32  },
+    { RTLIB::FPTOUINT_F32_I64,   ISD::FP_TO_SINT, MVT::f32,  MVT::i64  },
+    { RTLIB::FPTOUINT_F32_I128,  ISD::FP_TO_SINT, MVT::f32,  MVT::i128 },
+    { RTLIB::FPTOUINT_F64_I32,   ISD::FP_TO_SINT, MVT::f64,  MVT::i32  },
+    { RTLIB::FPTOUINT_F64_I64,   ISD::FP_TO_SINT, MVT::f64,  MVT::i64  },
+    { RTLIB::FPTOUINT_F64_I128,  ISD::FP_TO_SINT, MVT::f64,  MVT::i128 },
+    { RTLIB::FPTOUINT_F128_I32,  ISD::FP_TO_SINT, MVT::f128, MVT::i32  },
+    { RTLIB::FPTOUINT_F128_I64,  ISD::FP_TO_SINT, MVT::f128, MVT::i64  },
+    { RTLIB::FPTOUINT_F128_I128, ISD::FP_TO_SINT, MVT::f128, MVT::i128 },
+    { RTLIB::FPTOUINT_F32_I32,   ISD::FP_TO_UINT, MVT::f32,  MVT::i32  },
+    { RTLIB::FPTOUINT_F32_I64,   ISD::FP_TO_UINT, MVT::f32,  MVT::i64  },
+    { RTLIB::FPTOUINT_F32_I128,  ISD::FP_TO_UINT, MVT::f32,  MVT::i128 },
+    { RTLIB::FPTOUINT_F64_I32,   ISD::FP_TO_UINT, MVT::f64,  MVT::i32  },
+    { RTLIB::FPTOUINT_F64_I64,   ISD::FP_TO_UINT, MVT::f64,  MVT::i64  },
+    { RTLIB::FPTOUINT_F64_I128,  ISD::FP_TO_UINT, MVT::f64,  MVT::i128 },
+    { RTLIB::FPTOUINT_F128_I32,  ISD::FP_TO_UINT, MVT::f128, MVT::i32  },
+    { RTLIB::FPTOUINT_F128_I64,  ISD::FP_TO_UINT, MVT::f128, MVT::i64  },
+    { RTLIB::FPTOUINT_F128_I128, ISD::FP_TO_UINT, MVT::f128, MVT::i128 },
+  };
+  auto toType = Node->getSimpleValueType(0).SimpleTy;
+  auto fromType = Node->getOperand(0).getSimpleValueType().SimpleTy;
+  RTLIB::Libcall LC = RTLIB::UNKNOWN_LIBCALL;
+  for (const auto &SLC : SupportedLibcalls) {
+    if (SLC.Opc == Opc && SLC.From == fromType && SLC.To == toType) {
+      LC = SLC.LC;
+      break;
+    }
+  }
+  if (LC == RTLIB::UNKNOWN_LIBCALL) {
+    llvm_unreachable("Unexpected request for libcall!");
+  }
+  return ExpandLibCall(LC, Node, /*isSigned=*/false);
+}
+
 /// This function is responsible for legalizing a
 /// INT_TO_FP operation of the specified operand when the target requests that
 /// we expand it.  At this point, we know that the result and operand types are
@@ -4070,6 +4113,11 @@ void SelectionDAGLegalize::ConvertNodeToLibcall(SDNode *Node) {
                                        RTLIB::MUL_I8,
                                        RTLIB::MUL_I16, RTLIB::MUL_I32,
                                        RTLIB::MUL_I64, RTLIB::MUL_I128));
+    break;
+
+  case ISD::FP_TO_SINT:
+  case ISD::FP_TO_UINT:
+    Results.push_back(ExpandFPToIntLibCall(Node, Opc));
     break;
   }
 
