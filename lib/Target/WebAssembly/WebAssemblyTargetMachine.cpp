@@ -179,6 +179,10 @@ void WebAssemblyPassConfig::addIRPasses() {
   // to match.
   addPass(createWebAssemblyFixFunctionBitcasts());
 
+  // Fix float to int conversions. LLVM IR models fptoui as never trapping,
+  // whereas WebAssembly's corresponding instructions can trap.
+  addPass(createWebAssemblyFixFloatToIntConversion());
+
   // Optimize "returned" function attributes.
   if (getOptLevel() != CodeGenOpt::None)
     addPass(createWebAssemblyOptimizeReturned());
