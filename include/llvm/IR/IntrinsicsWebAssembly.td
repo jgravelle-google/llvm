@@ -19,4 +19,9 @@ let TargetPrefix = "wasm" in {  // All intrinsics start with "llvm.wasm.".
 def int_wasm_current_memory : Intrinsic<[llvm_anyint_ty], [], [IntrReadMem]>;
 def int_wasm_grow_memory : Intrinsic<[llvm_anyint_ty], [LLVMMatchType<0>], []>;
 
+def int_wasm_trapping_ftoui : Intrinsic<[llvm_anyint_ty], [llvm_anyfloat_ty],
+                                        [Throws]>;
+def int_wasm_trapping_ftosi : Intrinsic<[llvm_anyint_ty], [llvm_anyfloat_ty],
+                                        [Throws]>;
+
 }

@@ -38,28 +38,28 @@ let Defs = [ARGUMENTS] in {
 // Conversion from floating point to integer traps on overflow and invalid.
 let hasSideEffects = 1 in {
 def I32_TRUNC_S_F32 : I<(outs I32:$dst), (ins F32:$src),
-                        [(set I32:$dst, (fp_to_sint F32:$src))],
+                        [(set I32:$dst, (int_wasm_trapping_ftosi F32:$src))],
                         "i32.trunc_s/f32\t$dst, $src", 0xa8>;
 def I32_TRUNC_U_F32 : I<(outs I32:$dst), (ins F32:$src),
-                        [(set I32:$dst, (fp_to_uint F32:$src))],
+                        [(set I32:$dst, (int_wasm_trapping_ftoui F32:$src))],
                         "i32.trunc_u/f32\t$dst, $src", 0xa9>;
 def I64_TRUNC_S_F32 : I<(outs I64:$dst), (ins F32:$src),
-                        [(set I64:$dst, (fp_to_sint F32:$src))],
+                        [(set I64:$dst, (int_wasm_trapping_ftosi F32:$src))],
                         "i64.trunc_s/f32\t$dst, $src", 0xae>;
 def I64_TRUNC_U_F32 : I<(outs I64:$dst), (ins F32:$src),
-                        [(set I64:$dst, (fp_to_uint F32:$src))],
+                        [(set I64:$dst, (int_wasm_trapping_ftoui F32:$src))],
                         "i64.trunc_u/f32\t$dst, $src", 0xaf>;
 def I32_TRUNC_S_F64 : I<(outs I32:$dst), (ins F64:$src),
-                        [(set I32:$dst, (fp_to_sint F64:$src))],
+                        [(set I32:$dst, (int_wasm_trapping_ftosi F64:$src))],
                         "i32.trunc_s/f64\t$dst, $src", 0xaa>;
 def I32_TRUNC_U_F64 : I<(outs I32:$dst), (ins F64:$src),
-                        [(set I32:$dst, (fp_to_uint F64:$src))],
+                        [(set I32:$dst, (int_wasm_trapping_ftoui F64:$src))],
                         "i32.trunc_u/f64\t$dst, $src", 0xab>;
 def I64_TRUNC_S_F64 : I<(outs I64:$dst), (ins F64:$src),
-                        [(set I64:$dst, (fp_to_sint F64:$src))],
+                        [(set I64:$dst, (int_wasm_trapping_ftosi F64:$src))],
                         "i64.trunc_s/f64\t$dst, $src", 0xb0>;
 def I64_TRUNC_U_F64 : I<(outs I64:$dst), (ins F64:$src),
-                        [(set I64:$dst, (fp_to_uint F64:$src))],
+                        [(set I64:$dst, (int_wasm_trapping_ftoui F64:$src))],
                         "i64.trunc_u/f64\t$dst, $src", 0xb1>;
 } // hasSideEffects = 1
 

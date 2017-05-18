@@ -35,6 +35,7 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Operator.h"
+#include "llvm/IR/Type.h"
 #include "llvm/Pass.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
@@ -61,7 +62,6 @@ FunctionPass *llvm::createWebAssemblyFixFloatToIntConversion() {
   return new WebAssemblyFixFloatToIntConversion();
 }
 
-
 bool WebAssemblyFixFloatToIntConversion::runOnFunction(Function &F) {
   LLVMContext &C = F.getContext();
   bool DidChange = true;
@@ -79,9 +79,11 @@ bool WebAssemblyFixFloatToIntConversion::runOnFunction(Function &F) {
           break;
         case Instruction::FPToUI:
         case Instruction::FPToSI:
-          Value *FloatVal = I.getOperand(0);
           auto INext = II;
           ++INext;
+
+          Value *FloatVal = I.getOperand(0);
+          Type *FloatType = FloatVal->getType();
           BasicBlock *End = BB.splitBasicBlock(&*INext, "ftoi.end");
           BasicBlock *IfTrue = BB.splitBasicBlock(&I, "ftoi.checked");
 
@@ -91,8 +93,8 @@ bool WebAssemblyFixFloatToIntConversion::runOnFunction(Function &F) {
           uint64_t SignBit = IntType->getSignBit();
           uint64_t IntMin = IsSigned ? AllBits            : 0;
           uint64_t IntMax = IsSigned ? AllBits & ~SignBit : AllBits;
-          Constant *LowerBound = ConstantFP::get(FloatVal->getType(), IntMin);
-          Constant *UpperBound = ConstantFP::get(FloatVal->getType(), IntMax);
+          Constant *LowerBound = ConstantFP::get(FloatType, IntMin);
+          Constant *UpperBound = ConstantFP::get(FloatType, IntMax);
 
           BB.getTerminator()->eraseFromParent();
           IRB.SetInsertPoint(&BB);
@@ -101,14 +103,26 @@ bool WebAssemblyFixFloatToIntConversion::runOnFunction(Function &F) {
           Value *And = IRB.CreateAnd(CmpLo, CmpHi);
           IRB.CreateCondBr(And, IfTrue, End);
 
+          IRB.SetInsertPoint(&I);
+          SmallVector<Value*, 4> args;
+          SmallVector<Type*, 4> arg_type;
+          args.push_back(FloatVal);
+          arg_type.push_back(IntType);
+          arg_type.push_back(FloatType);
+          Intrinsic::ID intrin = IsSigned ? Intrinsic::wasm_trapping_ftosi
+                                          : Intrinsic::wasm_trapping_ftoui;
+          auto module = F.getParent();
+          Function *fun = Intrinsic::getDeclaration(module, intrin, arg_type);
+          Instruction *Call = IRB.CreateCall(fun, args);
+
           IRB.SetInsertPoint(&*INext);
           Constant *DefaultValue = ConstantInt::get(IntType, AllBits);
           PHINode *EndPhi = IRB.CreatePHI(IntType, 2);
-          // Set uses before adding incomings to Phi in order to avoid
-          // overwriting the Use of I that creates.
-          I.replaceAllUsesWith(EndPhi);
           EndPhi->addIncoming(DefaultValue, &BB);
-          EndPhi->addIncoming(&I, IfTrue);
+          EndPhi->addIncoming(Call, IfTrue);
+
+          I.replaceAllUsesWith(EndPhi);
+          I.eraseFromParent();
 
           for (auto BI2 = F.begin(); BI2 != F.end(); BI2++) {
             if (&*BI2 == End) {
