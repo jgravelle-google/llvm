@@ -215,7 +215,7 @@ define float @f32_demote_f64(double %x) {
   ret float %a
 }
 
-; If the high its are unused, LLVM will optimize sext/zext into anyext, which
+; If the high bits are unused, LLVM will optimize sext/zext into anyext, which
 ; we need to patterm-match back to a specific instruction.
 
 ; CHECK-LABEL: anyext:

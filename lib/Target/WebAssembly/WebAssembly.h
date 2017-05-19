@@ -24,13 +24,14 @@ namespace llvm {
 class WebAssemblyTargetMachine;
 class ModulePass;
 class FunctionPass;
+class BasicBlockPass;
 
 // LLVM IR passes.
 ModulePass *createWebAssemblyLowerEmscriptenEHSjLj(bool DoEH, bool DoSjLj);
 void initializeWebAssemblyLowerEmscriptenEHSjLjPass(PassRegistry &);
-FunctionPass *createWebAssemblyFixFloatToIntConversion();
 ModulePass *createWebAssemblyFixFunctionBitcasts();
 FunctionPass *createWebAssemblyOptimizeReturned();
+BasicBlockPass *createWebAssemblyFixFloatToIntConversion();
 
 // ISel and immediate followup passes.
 FunctionPass *createWebAssemblyISelDag(WebAssemblyTargetMachine &TM,
