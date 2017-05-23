@@ -62,84 +62,89 @@ BasicBlockPass *llvm::createWebAssemblyFixFloatToIntConversion() {
   return new WebAssemblyFixFloatToIntConversion();
 }
 
-using InstrIter = SymbolTableList<Instruction>::iterator;
+/// Helper struct to hold computed values from FtoI Instruction
+struct InstrData {
+  Instruction &Instr;
+  bool IsSigned;
+  Value *Float;
+  Type *FloatType;
+  IntegerType *IntType;
 
-void lowerFtoi(BasicBlock &BB, InstrIter II);
-Function* getIntrinsicFunction(Function *F, Type *IntType, Type *FloatType, bool IsSigned);
+  InstrData(Instruction &I) : Instr(I) {
+    IsSigned = (I.getOpcode() == Instruction::FPToSI);
+    Float = I.getOperand(0);
+    FloatType = Float->getType();
+    IntType = cast<IntegerType>(I.getType());
+  }
+};
+
+static void lowerFtoi(BasicBlock &BB, InstrData const &IData);
+static Function* getIntrinsicFunction(InstrData const &IData);
 
 bool WebAssemblyFixFloatToIntConversion::runOnBasicBlock(BasicBlock &BB) {
-  for (InstrIter II = BB.begin(); II != BB.end(); ++II) {
-    Instruction &I = *II;
+  for (Instruction &I : BB) {
     switch (I.getOpcode()) {
     default:
       break;
     case Instruction::FPToUI:
     case Instruction::FPToSI:
-      Value *FloatVal = I.getOperand(0);
-      Type *FloatType = FloatVal->getType();
-      if (FloatType->isFP128Ty()) {
+      InstrData IData(I);
+      if (IData.FloatType->isFP128Ty()) {
+        // Long double ops are converted to libcalls, so don't touch them here.
         continue;
       }
 
-      lowerFtoi(BB, II);
+      lowerFtoi(BB, IData);
       return true;
     }
   }
   return false;
 }
 
-void lowerFtoi(BasicBlock &BB, InstrIter II) {
-  Instruction &I = *II;
-  bool IsSigned = (I.getOpcode() == Instruction::FPToSI);
-  Value *Float = I.getOperand(0);
-  Type *FloatType = Float->getType();
-  IntegerType *IntType = cast<IntegerType>(I.getType());
-
-  Function *F = BB.getParent();
-  LLVMContext &C = F->getContext();
-  IRBuilder<> IRB(C);
-  InstrIter INext = II;
+static void lowerFtoi(BasicBlock &BB, InstrData const &IData) {
+  IRBuilder<> IRB(BB.getContext());
+  auto INext = IData.Instr.getIterator();
   ++INext;
 
   BasicBlock *End = BB.splitBasicBlock(&*INext, "ftoi.end");
-  BasicBlock *IfTrue = BB.splitBasicBlock(&I, "ftoi.checked");
+  BasicBlock *IfTrue = BB.splitBasicBlock(&IData.Instr, "ftoi.checked");
 
-  uint64_t AllBits = IntType->getBitMask();
-  uint64_t SignBit = IntType->getSignBit();
-  uint64_t IntMin = IsSigned ? AllBits            : 0;
-  uint64_t IntMax = IsSigned ? AllBits & ~SignBit : AllBits;
-  Constant *LowerBound = ConstantFP::get(FloatType, IntMin);
-  Constant *UpperBound = ConstantFP::get(FloatType, IntMax);
+  uint64_t AllBits = IData.IntType->getBitMask();
+  uint64_t SignBit = IData.IntType->getSignBit();
+  uint64_t IntMin = IData.IsSigned ? AllBits            : 0;
+  uint64_t IntMax = IData.IsSigned ? AllBits & ~SignBit : AllBits;
+  Constant *LowerBound = ConstantFP::get(IData.FloatType, IntMin);
+  Constant *UpperBound = ConstantFP::get(IData.FloatType, IntMax);
 
   BB.getTerminator()->eraseFromParent();
   IRB.SetInsertPoint(&BB);
-  Value *CmpLo = IRB.CreateFCmpOGE(Float, LowerBound);
-  Value *CmpHi = IRB.CreateFCmpOLE(Float, UpperBound);
+  Value *CmpLo = IRB.CreateFCmpOGE(IData.Float, LowerBound);
+  Value *CmpHi = IRB.CreateFCmpOLE(IData.Float, UpperBound);
   Value *And = IRB.CreateAnd(CmpLo, CmpHi);
   IRB.CreateCondBr(And, IfTrue, End);
 
-  IRB.SetInsertPoint(&I);
+  IRB.SetInsertPoint(&IData.Instr);
   SmallVector<Value*, 4> CallArgs;
-  CallArgs.push_back(Float);
-  Function *IntrinsicFunc = getIntrinsicFunction(F, IntType, FloatType, IsSigned);
+  CallArgs.push_back(IData.Float);
+  Function *IntrinsicFunc = getIntrinsicFunction(IData);
   Instruction *Call = IRB.CreateCall(IntrinsicFunc, CallArgs);
 
   IRB.SetInsertPoint(&*INext);
-  Constant *DefaultValue = ConstantInt::get(IntType, AllBits);
-  PHINode *EndPhi = IRB.CreatePHI(IntType, 2);
+  Constant *DefaultValue = ConstantInt::get(IData.IntType, AllBits);
+  PHINode *EndPhi = IRB.CreatePHI(IData.IntType, 2);
   EndPhi->addIncoming(DefaultValue, &BB);
   EndPhi->addIncoming(Call, IfTrue);
 
-  I.replaceAllUsesWith(EndPhi);
-  I.eraseFromParent();
+  IData.Instr.replaceAllUsesWith(EndPhi);
+  IData.Instr.eraseFromParent();
 }
 
-Function* getIntrinsicFunction(Function *F, Type *IntType, Type *FloatType, bool IsSigned) {
+static Function* getIntrinsicFunction(InstrData const &IData) {
   SmallVector<Type*, 4> IntrinsicTypes;
-  IntrinsicTypes.push_back(IntType);
-  IntrinsicTypes.push_back(FloatType);
-  Intrinsic::ID Intrin = IsSigned ? Intrinsic::wasm_trapping_ftosi
-                                  : Intrinsic::wasm_trapping_ftoui;
-  Module *M = F->getParent();
+  IntrinsicTypes.push_back(IData.IntType);
+  IntrinsicTypes.push_back(IData.FloatType);
+  Intrinsic::ID Intrin = IData.IsSigned ? Intrinsic::wasm_trapping_ftosi
+                                       : Intrinsic::wasm_trapping_ftoui;
+  Module *M = IData.Instr.getModule();
   return Intrinsic::getDeclaration(M, Intrin, IntrinsicTypes);
 }
