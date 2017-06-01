@@ -79,6 +79,9 @@ struct InstrData {
 };
 
 static void lowerFtoi(BasicBlock &BB, InstrData const &IData);
+static BasicBlock* createBoundsCheck(IRBuilder<> &IRB, BasicBlock &BB,
+                                     InstrData const &IData,
+                                     Instruction *INext);
 static Function* getIntrinsicFunction(InstrData const &IData);
 
 bool WebAssemblyFixFloatToIntConversion::runOnBasicBlock(BasicBlock &BB) {
@@ -106,7 +109,29 @@ static void lowerFtoi(BasicBlock &BB, InstrData const &IData) {
   auto INext = IData.Instr.getIterator();
   ++INext;
 
-  BasicBlock *End = BB.splitBasicBlock(&*INext, "ftoi.end");
+  BasicBlock *IfTrue = createBoundsCheck(IRB, BB, IData, &*INext);
+
+  IRB.SetInsertPoint(&IData.Instr);
+  SmallVector<Value*, 4> CallArgs;
+  CallArgs.push_back(IData.Float);
+  Function *IntrinsicFunc = getIntrinsicFunction(IData);
+  Instruction *Call = IRB.CreateCall(IntrinsicFunc, CallArgs);
+
+  IRB.SetInsertPoint(&*INext);
+  uint64_t AllBits = IData.IntType->getBitMask();
+  Constant *DefaultValue = ConstantInt::get(IData.IntType, AllBits);
+  PHINode *EndPhi = IRB.CreatePHI(IData.IntType, 2);
+  EndPhi->addIncoming(DefaultValue, &BB);
+  EndPhi->addIncoming(Call, IfTrue);
+
+  IData.Instr.replaceAllUsesWith(EndPhi);
+  IData.Instr.eraseFromParent();
+}
+
+static BasicBlock* createBoundsCheck(IRBuilder<> &IRB, BasicBlock &BB,
+                                     InstrData const &IData,
+                                     Instruction *INext) {
+  BasicBlock *End = BB.splitBasicBlock(INext, "ftoi.end");
   BasicBlock *IfTrue = BB.splitBasicBlock(&IData.Instr, "ftoi.checked");
 
   uint64_t AllBits = IData.IntType->getBitMask();
@@ -116,27 +141,14 @@ static void lowerFtoi(BasicBlock &BB, InstrData const &IData) {
   Constant *LowerBound = ConstantFP::get(IData.FloatType, IntMin);
   Constant *UpperBound = ConstantFP::get(IData.FloatType, IntMax);
 
-  BB.getTerminator()->eraseFromParent();
   IRB.SetInsertPoint(&BB);
+  BB.getTerminator()->eraseFromParent();
   Value *CmpLo = IRB.CreateFCmpOGE(IData.Float, LowerBound);
   Value *CmpHi = IRB.CreateFCmpOLE(IData.Float, UpperBound);
   Value *And = IRB.CreateAnd(CmpLo, CmpHi);
   IRB.CreateCondBr(And, IfTrue, End);
 
-  IRB.SetInsertPoint(&IData.Instr);
-  SmallVector<Value*, 4> CallArgs;
-  CallArgs.push_back(IData.Float);
-  Function *IntrinsicFunc = getIntrinsicFunction(IData);
-  Instruction *Call = IRB.CreateCall(IntrinsicFunc, CallArgs);
-
-  IRB.SetInsertPoint(&*INext);
-  Constant *DefaultValue = ConstantInt::get(IData.IntType, AllBits);
-  PHINode *EndPhi = IRB.CreatePHI(IData.IntType, 2);
-  EndPhi->addIncoming(DefaultValue, &BB);
-  EndPhi->addIncoming(Call, IfTrue);
-
-  IData.Instr.replaceAllUsesWith(EndPhi);
-  IData.Instr.eraseFromParent();
+  return IfTrue;
 }
 
 static Function* getIntrinsicFunction(InstrData const &IData) {
