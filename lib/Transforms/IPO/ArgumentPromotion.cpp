@@ -816,7 +816,8 @@ static Function *
 promoteArguments(Function *F, function_ref<AAResults &(Function &F)> AARGetter,
                  unsigned MaxElements,
                  Optional<function_ref<void(CallSite OldCS, CallSite NewCS)>>
-                     ReplaceCallSite) {
+                     ReplaceCallSite,
+                 const TargetLibraryInfo &TLI) {
   // Don't perform argument promotion for naked functions; otherwise we can end
   // up removing parameters that are seemingly 'not used' as they are referred
   // to in the assembly.
@@ -825,6 +826,12 @@ promoteArguments(Function *F, function_ref<AAResults &(Function &F)> AARGetter,
 
   // Make sure that it is local to this module.
   if (!F->hasLocalLinkage())
+    return nullptr;
+
+  // Don't promote arguments for library functions. We can make assumptions
+  // about library function signatures in later passes.
+  LibFunc LF;
+  if (TLI.getLibFunc(*F, LF))
     return nullptr;
 
   // Don't promote arguments for variadic functions. Adding, removing, or
@@ -978,8 +985,10 @@ PreservedAnalyses ArgumentPromotionPass::run(LazyCallGraph::SCC &C,
         assert(&F == &OldF && "Called with an unexpected function!");
         return FAM.getResult<AAManager>(F);
       };
+      const TargetLibraryInfo *TLI = &FAM.getResult<TargetLibraryAnalysis>(OldF);
 
-      Function *NewF = promoteArguments(&OldF, AARGetter, MaxElements, None);
+      Function *NewF = promoteArguments(&OldF, AARGetter, MaxElements, None,
+                                        *TLI);
       if (!NewF)
         continue;
       LocalChange = true;
@@ -1056,6 +1065,8 @@ bool ArgPromotion::runOnSCC(CallGraphSCC &SCC) {
   // Get the callgraph information that we need to update to reflect our
   // changes.
   CallGraph &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
+  TargetLibraryInfo const& TLI =
+    getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
 
   LegacyAARGetter AARGetter(*this);
 
@@ -1079,7 +1090,7 @@ bool ArgPromotion::runOnSCC(CallGraphSCC &SCC) {
       };
 
       if (Function *NewF = promoteArguments(OldF, AARGetter, MaxElements,
-                                            {ReplaceCallSite})) {
+                                            {ReplaceCallSite}, TLI)) {
         LocalChange = true;
 
         // Update the call graph for the newly promoted function.

@@ -32,6 +32,7 @@
 namespace llvm {
 
 class Module;
+class TargetLibraryInfo;
 class Use;
 class Value;
 
@@ -128,7 +129,7 @@ private:
                      unsigned RetValNum = -1U);
   Liveness SurveyUses(const Value *V, UseVector &MaybeLiveUses);
 
-  void SurveyFunction(const Function &F);
+  void SurveyFunction(const Function &F, const TargetLibraryInfo &TLI);
   void MarkValue(const RetOrArg &RA, Liveness L,
                  const UseVector &MaybeLiveUses);
   void MarkLive(const RetOrArg &RA);

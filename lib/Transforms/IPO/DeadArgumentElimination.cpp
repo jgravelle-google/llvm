@@ -20,6 +20,7 @@
 #include "llvm/Transforms/IPO/DeadArgumentElimination.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/IR/Argument.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/BasicBlock.h"
@@ -79,6 +80,7 @@ namespace {
         return false;
       DeadArgumentEliminationPass DAEP(ShouldHackArguments());
       ModuleAnalysisManager DummyMAM;
+      DummyMAM.registerPass([&] { return TargetLibraryAnalysis(); });
       PreservedAnalyses PA = DAEP.run(M, DummyMAM);
       return !PA.areAllPreserved();
     }
@@ -480,7 +482,8 @@ DeadArgumentEliminationPass::SurveyUses(const Value *V,
 //
 // We consider arguments of non-internal functions to be intrinsically alive as
 // well as arguments to functions which have their "address taken".
-void DeadArgumentEliminationPass::SurveyFunction(const Function &F) {
+void DeadArgumentEliminationPass::SurveyFunction(const Function &F,
+                                                 const TargetLibraryInfo &TLI) {
   // Functions with inalloca parameters are expecting args in a particular
   // register and memory layout.
   if (F.getAttributes().hasAttrSomewhere(Attribute::InAlloca)) {
@@ -533,7 +536,10 @@ void DeadArgumentEliminationPass::SurveyFunction(const Function &F) {
                       << " has musttail calls\n");
   }
 
-  if (!F.hasLocalLinkage() && (!ShouldHackArguments || F.isIntrinsic())) {
+  bool CanTouchArguments = ShouldHackArguments && !F.isIntrinsic();
+  LibFunc LF;
+  bool IsLibFunc = TLI.getLibFunc(F, LF);
+  if ((!F.hasLocalLinkage() && !CanTouchArguments) || IsLibFunc) {
     MarkLive(F);
     return;
   }
@@ -1079,8 +1085,9 @@ bool DeadArgumentEliminationPass::RemoveDeadStuffFromFunction(Function *F) {
 }
 
 PreservedAnalyses DeadArgumentEliminationPass::run(Module &M,
-                                                   ModuleAnalysisManager &) {
+                                                   ModuleAnalysisManager &AM) {
   bool Changed = false;
+  const TargetLibraryInfo *TLI = &AM.getResult<TargetLibraryAnalysis>(M);
 
   // First pass: Do a simple check to see if any functions can have their "..."
   // removed.  We can do this if they never call va_start.  This loop cannot be
@@ -1099,7 +1106,7 @@ PreservedAnalyses DeadArgumentEliminationPass::run(Module &M,
   //
   LLVM_DEBUG(dbgs() << "DeadArgumentEliminationPass - Determining liveness\n");
   for (auto &F : M)
-    SurveyFunction(F);
+    SurveyFunction(F, *TLI);
 
   // Now, remove all dead arguments and return values from each function in
   // turn.
